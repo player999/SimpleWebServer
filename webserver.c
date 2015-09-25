@@ -28,7 +28,7 @@ static char pageroot[] =
 "<body>"
 "<h1>This is Root page</h1>"
 "<p><a href=\"/page1.html\">Page 1</p>"
-"<p><a href=\"/page2.html\">Page 1</p>"
+"<p><a href=\"/page2.html\">Page 2</p>"
 "</body>"
 "</html>";
 

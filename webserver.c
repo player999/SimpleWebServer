@@ -1,14 +1,17 @@
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <strings.h>
 #include <string.h>
 #include <time.h>
 #include <locale.h>
+#include <unistd.h>
 #include <sys/types.h> 
 #include <sys/socket.h>
 #include <netinet/in.h>
 
 #define BUFS 4096
+#define LOCKFILE "bydloserver.lock"
 
 // HTTP header for response
 #define HEADERS "\
@@ -66,10 +69,103 @@ static char page404[] =
 "</body>"
 "</html>";
 
-int process_packet(const char *inbuf, char *outbuf, int bufsize);
-int make_response(const char *body, char *outbuf, int bufsize);
+static int process_packet(const char *inbuf, char *outbuf, int bufsize);
+static int make_response(const char *body, char *outbuf, int bufsize);
+static int server_main();
+
+static pid_t get_server_pid();
+static void stop_server();
+static void start_server();
 
 int main(int argc, char *argv[])
+{
+    if (argc != 2) {
+        printf("Specify action please: start, stop, restart\n");
+        return -1;
+    }
+
+    if (!strcmp(argv[1], "start")) {
+        start_server();
+    }
+    else if (!strcmp(argv[1], "stop")) {
+        stop_server();
+    }
+    else if (!strcmp(argv[1], "restart")) {
+        stop_server();
+        start_server();
+    }
+    return 0; 
+}
+
+static void stop_server() {
+    pid_t pid;
+    pid = get_server_pid();
+    if (pid > 0) {
+        unlink("/var/run/lock/"LOCKFILE);
+        kill(pid, 9);
+        printf("Killed server with PID=%d\n", pid);
+    } 
+    else 
+        printf("Server is already killed\n");
+}
+
+static void start_server() {
+    pid_t pid;
+    FILE *fh;
+
+    //Check if server is running
+    pid = get_server_pid();
+    if (pid > 0) {
+        printf("Server is already running as process %d\n", pid);
+        exit(-1);
+    }
+
+    //Fork new process from main process
+    pid = fork();
+
+    if (0 == pid) {
+        //Child process
+        
+        //Create new session
+        setsid();
+
+        //Close standard streams. We will not use them
+        close(STDIN_FILENO);
+        close(STDOUT_FILENO);
+        close(STDERR_FILENO);
+        
+        //Change working directory of daemon
+        chdir("/");
+
+        server_main(); // Launch server
+    }
+    else if (pid < 0) {
+        //Case of fail
+        printf("Failed to daemonize\n");
+        exit(-1);
+    }
+    else if (pid > 0) {
+        //Old process
+        printf("Created http daemon with PID=%d\n", pid);
+        fh = fopen("/var/run/lock/"LOCKFILE, "w");
+        fprintf(fh, "%d", pid);
+        fclose(fh);
+    }
+}
+
+static pid_t get_server_pid() {
+    FILE *fh;
+    fh = fopen("/var/run/lock/"LOCKFILE, "r");
+    if (fh != NULL) {
+        int processid;
+        fscanf(fh, "%d", &processid);
+        fclose(fh);
+        return processid;
+    }
+    return -1;
+}
+
+static int server_main()
 {
     int sockfd, newsockfd, clilen, n, outlen, sendsize;
     char recv_buffer[BUFS], send_buffer[BUFS];
@@ -116,7 +212,7 @@ int main(int argc, char *argv[])
     return 0; 
 }
 
-int process_packet(const char *inbuf, char *outbuf, int bufsize) 
+static int process_packet(const char *inbuf, char *outbuf, int bufsize) 
 {
     int urlen;
     char page[4096];
@@ -137,7 +233,7 @@ int process_packet(const char *inbuf, char *outbuf, int bufsize)
     respsize = make_response(outdata, outbuf, bufsize);
 }
 
-int make_response(const char *body, char *outbuf, int bufsize)
+static int make_response(const char *body, char *outbuf, int bufsize)
 {
     int offset;
     int nbytes;
